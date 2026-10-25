@@ -1,0 +1,32 @@
+# CMake / local builds
+/build/
+/out/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
+compile_commands.json
+CMakeUserPresets.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+*.dSYM
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+
+# Object files and static libs produced outside the build tree
+*.o
+*.a
+
+# Editors
+.idea/
+*.swp
+*~
