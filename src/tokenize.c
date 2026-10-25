@@ -6,6 +6,22 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Longest extension name at s[i], or 0. More letters may follow (the argument). */
+static size_t ext_command(const char *s, size_t n, size_t i) {
+    static const char *const words[] = {"DELAY", "TONE"};
+    size_t w, best = 0;
+    for (w = 0; w < sizeof words / sizeof words[0]; w++) {
+        size_t k = 0;
+        while (words[w][k] && i + k < n) {
+            char c = (char)toupper((unsigned char)s[i + k]);
+            if (c != words[w][k]) break;
+            k++;
+        }
+        if (!words[w][k] && k > best) best = k;
+    }
+    return best;
+}
+
 static int kw_match(const char *s, size_t n, size_t i, int *token, size_t *end) {
     int t;
     for (t = 0; t < TK_COUNT; t++) {
@@ -25,6 +41,8 @@ static int kw_match(const char *s, size_t n, size_t i, int *token, size_t *end) 
         if (!ok) continue;
         if ((TK_FIRST + t) == TK_AT) {
             size_t k2 = j;
+            /* "A THEN" / "A TO" must not become AT by skipping a space. */
+            if (j - i != 2) continue;
             while (k2 < n && s[k2] == ' ') k2++;
             if (k2 < n) {
                 char c = (char)toupper((unsigned char)s[k2]);
@@ -78,6 +96,7 @@ void as_tokenized_free(AsTokenized *t) {
 void as_tokenize(const char *src, AsTokenized *out) {
     size_t n, i;
     int data = 0;
+    int amp_name = 0;
     Buf buf;
     uint8_t *klass;
     memset(out, 0, sizeof *out);
@@ -130,6 +149,38 @@ void as_tokenize(const char *src, AsTokenized *out) {
             i++;
             continue;
         }
+        /* The word after & is an extension name, stored as letters. DEL and TO
+           would otherwise swallow DELAY and TONE. */
+        if (amp_name) {
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+                size_t cmd = ext_command(src, n, i);
+                size_t end = i;
+                if (cmd) end = i + cmd;
+                else {
+                    while (end < n) {
+                        unsigned char ch = (unsigned char)src[end];
+                        if (ch >= 'a' && ch <= 'z') ch = (unsigned char)(ch - 32);
+                        if (ch < 'A' || ch > 'Z') break;
+                        end++;
+                    }
+                }
+                while (i < end) {
+                    unsigned char ch = (unsigned char)src[i];
+                    if (ch >= 'a' && ch <= 'z') ch = (unsigned char)(ch - 32);
+                    buf_add(&buf, (uint8_t)ch, (uint32_t)i, 1);
+                    klass[i] = AS_CLS_KEYWORD;
+                    i++;
+                }
+                amp_name = 0;
+                /* Keep one space so "& TONE A" does not come back as "& TONEA". */
+                if (i < n && src[i] == ' ') {
+                    buf_add(&buf, ' ', (uint32_t)i, 1);
+                    while (i < n && src[i] == ' ') i++;
+                }
+                continue;
+            }
+            amp_name = 0;
+        }
         if (c >= '0' && c <= ';') {
             int varish = 0;
             if (i > 0 && klass[i - 1] == AS_CLS_VARIABLE && c >= '0' && c <= '9') varish = 1;
@@ -147,10 +198,12 @@ void as_tokenize(const char *src, AsTokenized *out) {
                 buf_add(&buf, (uint8_t)token, (uint32_t)i, span);
                 mark_kw(klass, src, i, end);
                 i = end;
+                amp_name = (token == TK_AMP);
                 if (token == TK_DATA) data = 1;
                 if (token == TK_REM) {
                     while (i < n) {
                         buf_add(&buf, (uint8_t)src[i], (uint32_t)i, 1);
+                        klass[i] = AS_CLS_REMARK;
                         i++;
                     }
                     break;
@@ -179,8 +232,154 @@ void as_tokenize(const char *src, AsTokenized *out) {
     out->source_len = n;
 }
 
+static void skip_string_tokens(const AsTokenized *t, size_t *pc) {
+    if (*pc < t->len && t->bytes[*pc] == '"') (*pc)++;
+    while (*pc < t->len && t->bytes[*pc] != '"') (*pc)++;
+    if (*pc < t->len && t->bytes[*pc] == '"') (*pc)++;
+}
+
+/* 1 = number, 0 = not a number, -1 = digits that are not a legal line number. */
+static int take_num(const AsTokenized *t, size_t *pc, uint16_t *num, size_t *begin, size_t *end) {
+    size_t i = *pc;
+    unsigned v = 0;
+    int overflow = 0;
+    if (i >= t->len || t->bytes[i] < '0' || t->bytes[i] > '9') return 0;
+    *begin = t->src[i];
+    while (i < t->len && t->bytes[i] >= '0' && t->bytes[i] <= '9') {
+        if (v > 6399u) overflow = 1;
+        else v = v * 10u + (unsigned)(t->bytes[i] - '0');
+        if (v > 63999u) overflow = 1;
+        i++;
+    }
+    *end = (size_t)t->src[i - 1] + t->src_n[i - 1];
+    *pc = i;
+    if (overflow) return -1;
+    *num = (uint16_t)v;
+    return 1;
+}
+
+static int each_jump(const AsTokenized *t, int (*fn)(uint16_t, size_t, size_t, void *), void *ctx) {
+    size_t pc = 0;
+    while (pc < t->len) {
+        uint8_t c = t->bytes[pc];
+        if (c == TK_REM) return 0;
+        if (c == '"') {
+            skip_string_tokens(t, &pc);
+            continue;
+        }
+        if (c == TK_DATA) {
+            pc++;
+            while (pc < t->len && t->bytes[pc] != ':') pc++;
+            continue;
+        }
+        if (c == TK_ON) {
+            int depth = 0;
+            pc++;
+            while (pc < t->len && t->bytes[pc] != ':') {
+                if (t->bytes[pc] == '"') {
+                    skip_string_tokens(t, &pc);
+                    continue;
+                }
+                if (t->bytes[pc] == '(') depth++;
+                else if (t->bytes[pc] == ')' && depth) depth--;
+                if (depth == 0 && (t->bytes[pc] == TK_GOTO || t->bytes[pc] == TK_GOSUB)) break;
+                pc++;
+            }
+            if (pc < t->len && (t->bytes[pc] == TK_GOTO || t->bytes[pc] == TK_GOSUB)) {
+                pc++;
+                for (;;) {
+                    uint16_t num;
+                    size_t b, e;
+                    int r = take_num(t, &pc, &num, &b, &e);
+                    if (r <= 0) break;
+                    if (fn(num, b, e, ctx)) return 1;
+                    if (pc < t->len && t->bytes[pc] == ',') {
+                        pc++;
+                        continue;
+                    }
+                    break;
+                }
+            }
+            continue;
+        }
+        if (c == TK_GOTO || c == TK_GOSUB || c == TK_THEN) {
+            uint16_t num;
+            size_t b, e;
+            int r;
+            pc++;
+            r = take_num(t, &pc, &num, &b, &e);
+            if (r > 0 && fn(num, b, e, ctx)) return 1;
+            continue;
+        }
+        pc++;
+    }
+    return 0;
+}
+
+struct JumpAt {
+    size_t index;
+    uint16_t *number;
+    size_t *begin;
+    size_t *end;
+};
+
+static int jump_at_fn(uint16_t num, size_t b, size_t e, void *ctx) {
+    struct JumpAt *at = ctx;
+    if (at->index < b || at->index >= e) return 0;
+    *at->number = num;
+    *at->begin = b;
+    *at->end = e;
+    return 1;
+}
+
+struct JumpList {
+    AsJumpRef *out;
+    size_t cap;
+    size_t n;
+};
+
+static int jump_list_fn(uint16_t num, size_t b, size_t e, void *ctx) {
+    struct JumpList *list = ctx;
+    if (list->n < list->cap && b <= e && e <= UINT32_MAX) {
+        list->out[list->n].number = num;
+        list->out[list->n].begin = (uint32_t)b;
+        list->out[list->n].end = (uint32_t)e;
+        list->n++;
+    }
+    return 0;
+}
+
+size_t as_jump_numbers(const char *src, AsJumpRef *out, size_t cap) {
+    AsTokenized t;
+    struct JumpList list;
+    if (!src || !out || cap == 0) return 0;
+    list.out = out;
+    list.cap = cap;
+    list.n = 0;
+    as_tokenize(src, &t);
+    each_jump(&t, jump_list_fn, &list);
+    as_tokenized_free(&t);
+    return list.n;
+}
+
+int as_jump_number_at(const char *src, size_t index, uint16_t *number, size_t *begin, size_t *end) {
+    AsTokenized t;
+    struct JumpAt at;
+    int hit;
+    if (!src || !number || !begin || !end) return 0;
+    at.index = index;
+    at.number = number;
+    at.begin = begin;
+    at.end = end;
+    as_tokenize(src, &t);
+    hit = each_jump(&t, jump_at_fn, &at);
+    as_tokenized_free(&t);
+    return hit;
+}
+
 int as_detokenize(const uint8_t *bytes, size_t len, char **text) {
     size_t cap = 64, n = 0, i;
+    int amp_name = 0;
     char *d = (char *)as_xmalloc(cap);
     for (i = 0; i < len; i++) {
         uint8_t c = bytes[i];
@@ -197,11 +396,15 @@ int as_detokenize(const uint8_t *bytes, size_t len, char **text) {
             memcpy(d + n, kw, klen);
             n += klen;
             d[n++] = ' ';
+            amp_name = (c == TK_AMP);
         } else {
-            if (n + 2 > cap) {
+            int gap = amp_name && (c < 'A' || c > 'Z');
+            if (gap) amp_name = 0;
+            if (n + 3 > cap) {
                 cap *= 2;
                 d = (char *)as_xrealloc(d, cap);
             }
+            if (gap && c != ' ' && n && d[n - 1] != ' ') d[n++] = ' ';
             d[n++] = (char)c;
         }
     }

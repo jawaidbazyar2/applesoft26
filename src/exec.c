@@ -132,6 +132,26 @@ static void clear_fns(AsMachine *m) {
     }
 }
 
+static double mono_now(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+
+static void silence_tone(AsMachine *m) {
+    m->tone_hz = 0;
+    m->wait_frozen = 0;
+    if (m->screen) m->screen->tone_hz = 0;
+}
+
+/* Pause stores the remaining delay in wait_until. Resume puts the deadline back. */
+static void thaw_wait(AsMachine *m) {
+    if (m->wait != AS_DELAY || !m->wait_frozen) return;
+    m->wait_until = mono_now() + m->wait_until;
+    m->wait_frozen = 0;
+    if (m->screen) m->screen->tone_hz = m->tone_hz;
+}
+
 static void reset_runtime(AsMachine *m) {
     as_vars_clear(m->vars);
     clear_fns(m);
@@ -146,6 +166,7 @@ static void reset_runtime(AsMachine *m) {
     m->input_ready = 0;
     m->input_shown = 0;
     m->key_ready = 0;
+    silence_tone(m);
     jump_free(m->jumps);
     m->jumps = jump_build(m->prog);
     if (m->screen) m->screen->cursor_on = 0;
@@ -352,40 +373,51 @@ static int stmt_for(AsMachine *m) {
 }
 
 static int stmt_next(AsMachine *m) {
-    int name = -1, type = AS_T_FLOAT;
     int rc;
     double cur;
     AsFrame *fr;
-    if (as_peekc(m) >= 'A' && as_peekc(m) <= 'Z') {
-        AsRef ref;
-        rc = as_parse_ref(m, &ref);
-        if (rc) return rc;
-        if (ref.is_array || ref.type == AS_T_STR) return as_fail(m, AS_ERR_TYPE_MISMATCH);
-        name = ref.name;
-        type = ref.type;
-    }
-    if (!as_at_end(m)) return as_fail(m, AS_ERR_SYNTAX);
-    if (m->check) return AS_OK;
     for (;;) {
-        if (m->sp <= 0 || m->stack[m->sp - 1].kind != 0) return as_fail(m, AS_ERR_NEXT_WITHOUT_FOR);
-        if (name < 0 || (m->stack[m->sp - 1].name == name && m->stack[m->sp - 1].vtype == type)) break;
-        m->sp--;
-    }
-    fr = &m->stack[m->sp - 1];
-    rc = as_vars_get_scalar(m->vars, fr->vtype, fr->name, &cur);
-    if (rc) return as_fail(m, rc);
-    cur += fr->step;
-    rc = as_vars_set_scalar(m->vars, fr->vtype, fr->name, cur);
-    if (rc) return as_fail(m, rc);
-    as_vars_get_scalar(m->vars, fr->vtype, fr->name, &cur);
-    if ((fr->step >= 0 && cur > fr->limit) || (fr->step < 0 && cur < fr->limit)) {
-        m->sp--;
+        int name = -1, type = AS_T_FLOAT;
+        if (as_peekc(m) >= 'A' && as_peekc(m) <= 'Z') {
+            AsRef ref;
+            rc = as_parse_ref(m, &ref);
+            if (rc) return rc;
+            if (ref.is_array || ref.type == AS_T_STR) return as_fail(m, AS_ERR_TYPE_MISMATCH);
+            name = ref.name;
+            type = ref.type;
+        }
+        if (name >= 0 && as_peekc(m) == ',') {
+            as_getc(m);
+            if (!(as_peekc(m) >= 'A' && as_peekc(m) <= 'Z')) return as_fail(m, AS_ERR_SYNTAX);
+        } else if (!as_at_end(m)) {
+            return as_fail(m, AS_ERR_SYNTAX);
+        }
+        if (m->check) {
+            if (as_at_end(m)) return AS_OK;
+            continue;
+        }
+        for (;;) {
+            if (m->sp <= 0 || m->stack[m->sp - 1].kind != 0) return as_fail(m, AS_ERR_NEXT_WITHOUT_FOR);
+            if (name < 0 || (m->stack[m->sp - 1].name == name && m->stack[m->sp - 1].vtype == type)) break;
+            m->sp--;
+        }
+        fr = &m->stack[m->sp - 1];
+        rc = as_vars_get_scalar(m->vars, fr->vtype, fr->name, &cur);
+        if (rc) return as_fail(m, rc);
+        cur += fr->step;
+        rc = as_vars_set_scalar(m->vars, fr->vtype, fr->name, cur);
+        if (rc) return as_fail(m, rc);
+        as_vars_get_scalar(m->vars, fr->vtype, fr->name, &cur);
+        if ((fr->step >= 0 && cur > fr->limit) || (fr->step < 0 && cur < fr->limit)) {
+            m->sp--;
+            if (as_at_end(m)) return AS_OK;
+            continue;
+        }
+        m->line = fr->line;
+        m->pc = fr->pc;
+        m->at_line_start = 0;
         return AS_OK;
     }
-    m->line = fr->line;
-    m->pc = fr->pc;
-    m->at_line_start = 0;
-    return AS_OK;
 }
 
 static int stmt_goto(AsMachine *m) {
@@ -1278,6 +1310,93 @@ static int stmt_call(AsMachine *m) {
     return as_fail(m, AS_ERR_CALL);
 }
 
+static int begin_wait(AsMachine *m, double seconds, double hz) {
+    double until;
+    if (!(seconds > 0)) return AS_OK;
+    until = mono_now() + seconds;
+    if (!isfinite(until)) return as_fail(m, AS_ERR_ILLEGAL_QUANTITY);
+    if (m->check) return AS_OK;
+    m->tone_hz = hz;
+    m->wait_until = until;
+    m->wait_frozen = 0;
+    m->wait = AS_DELAY;
+    if (m->screen) m->screen->tone_hz = hz;
+    return AS_DELAY;
+}
+
+static void skip_spaces(AsMachine *m) {
+    while (as_peekc(m) == ' ') as_getc(m);
+}
+
+/* & DELAY seconds */
+static int stmt_delay(AsMachine *m) {
+    double sec;
+    int rc;
+    skip_spaces(m);
+    rc = as_eval_num(m, &sec);
+    if (rc) return rc;
+    if (!as_at_end(m)) return as_fail(m, AS_ERR_SYNTAX);
+    if (!isfinite(sec) || sec < 0) return as_fail(m, AS_ERR_ILLEGAL_QUANTITY);
+    return begin_wait(m, sec, 0);
+}
+
+/* & TONE hertz, seconds. Zero hertz is a rest. The wave is a square tone. */
+static int stmt_tone(AsMachine *m) {
+    double hz, sec;
+    int rc;
+    skip_spaces(m);
+    rc = as_eval_num(m, &hz);
+    if (rc) return rc;
+    if (as_peekc(m) != ',') return as_fail(m, AS_ERR_SYNTAX);
+    as_getc(m);
+    rc = as_eval_num(m, &sec);
+    if (rc) return rc;
+    if (!as_at_end(m)) return as_fail(m, AS_ERR_SYNTAX);
+    if (!isfinite(hz) || hz < 0 || hz > 8000) return as_fail(m, AS_ERR_ILLEGAL_QUANTITY);
+    if (!isfinite(sec) || sec < 0) return as_fail(m, AS_ERR_ILLEGAL_QUANTITY);
+    return begin_wait(m, sec, hz);
+}
+
+static int take_ext(AsMachine *m, const char **name) {
+    static const char *const words[] = {"DELAY", "TONE"};
+    size_t w, best = 0;
+    const char *found = NULL;
+    for (w = 0; w < sizeof words / sizeof words[0]; w++) {
+        size_t k = 0;
+        while (words[w][k]) {
+            size_t p = m->pc + k;
+            if (!m->line || p >= m->line->len || m->line->tokens[p] != (uint8_t)words[w][k]) break;
+            k++;
+        }
+        if (!words[w][k] && k > best) {
+            best = k;
+            found = words[w];
+        }
+    }
+    if (!found) return 0;
+    m->pc += best;
+    *name = found;
+    return 1;
+}
+
+static int stmt_amp(AsMachine *m) {
+    const char *name = NULL;
+    size_t start = m->pc;
+    uint8_t c;
+    if (take_ext(m, &name)) {
+        if (strcmp(name, "DELAY") == 0) return stmt_delay(m);
+        return stmt_tone(m);
+    }
+    c = as_peekc(m);
+    if (c < 'A' || c > 'Z') return as_fail(m, AS_ERR_SYNTAX);
+    while (c >= 'A' && c <= 'Z') {
+        as_getc(m);
+        c = as_peekc(m);
+    }
+    m->pc = start;
+    return as_fail(m, AS_ERR_SYNTAX);
+}
+
 static int stmt_unsupported(AsMachine *m) {
     while (!as_at_end(m)) {
         if (as_peekc(m) == '"') {
@@ -1305,7 +1424,7 @@ static int dispatch(AsMachine *m, uint8_t tok) {
     case TK_GR: return stmt_gr(m);
     case TK_TEXT: return stmt_text(m);
     case TK_PR:
-    case TK_IN: return stmt_unsupported(m);
+    case TK_IN: return stmt_ignore_num(m);
     case TK_CALL: return stmt_call(m);
     case TK_PLOT: return stmt_plot(m);
     case TK_HLIN: return stmt_hlin(m);
@@ -1338,8 +1457,8 @@ static int dispatch(AsMachine *m, uint8_t tok) {
     case TK_STORE:
     case TK_WAIT:
     case TK_LOAD:
-    case TK_SAVE:
-    case TK_AMP: return stmt_unsupported(m);
+    case TK_SAVE: return stmt_unsupported(m);
+    case TK_AMP: return stmt_amp(m);
     case TK_LET: return stmt_let(m);
     case TK_GOTO: return stmt_goto(m);
     case TK_RUN: return stmt_run(m);
@@ -1455,6 +1574,7 @@ static void start_immediate(AsMachine *m, const uint8_t *tokens, size_t len) {
     m->paused = 0;
     m->step = 0;
     m->wait = 0;
+    silence_tone(m);
     m->error = 0;
     m->redirect = 0;
     m->input_shown = 0;
@@ -1528,6 +1648,7 @@ void as_machine_run(AsMachine *m) {
         m->paused = 0;
         m->running = 1;
         m->break_skip = 1;
+        thaw_wait(m);
         return;
     }
     reset_runtime(m);
@@ -1547,6 +1668,7 @@ void as_machine_stop(AsMachine *m) {
     m->wait = 0;
     m->sp = 0;
     m->can_cont = 0;
+    silence_tone(m);
     if (m->screen) m->screen->cursor_on = 0;
     snprintf(m->status, sizeof m->status, "STOPPED");
 }
@@ -1555,6 +1677,12 @@ void as_machine_pause(AsMachine *m) {
     if (!m->running) return;
     m->running = 0;
     m->paused = 1;
+    if (m->wait == AS_DELAY && !m->wait_frozen) {
+        double left = m->wait_until - mono_now();
+        m->wait_until = left > 0 ? left : 0;
+        m->wait_frozen = 1;
+    }
+    if (m->screen) m->screen->tone_hz = 0;
 }
 
 void as_machine_cont(AsMachine *m) {
@@ -1562,6 +1690,7 @@ void as_machine_cont(AsMachine *m) {
     m->paused = 0;
     m->running = 1;
     m->break_skip = 1;
+    thaw_wait(m);
 }
 
 void as_machine_step(AsMachine *m) {
@@ -1570,17 +1699,27 @@ void as_machine_step(AsMachine *m) {
     m->running = 1;
     m->paused = 0;
     m->break_skip = 1;
+    thaw_wait(m);
 }
 
 int as_machine_quantum(AsMachine *m, double seconds) {
     struct timespec t0, now;
     int steps = 0;
-    if (m->wait) return m->wait;
+    if (m->wait == AS_DELAY) {
+        if (!m->wait_frozen && mono_now() >= m->wait_until) {
+            m->wait = 0;
+            silence_tone(m);
+        } else {
+            return AS_DELAY;
+        }
+    } else if (m->wait) {
+        return m->wait;
+    }
     if (!m->running) return m->paused ? AS_PAUSED : (m->error ? m->error : AS_OK);
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (;;) {
         int rc = as_exec_one(m);
-        if (rc == AS_INPUT || rc == AS_GET) return rc;
+        if (rc == AS_INPUT || rc == AS_GET || rc == AS_DELAY) return rc;
         if (rc == AS_PAUSED) return AS_PAUSED;
         if (rc == AS_END) {
             m->running = 0;
@@ -1616,6 +1755,21 @@ uint16_t as_machine_line(const AsMachine *m) {
     return m->line->number;
 }
 
+void as_machine_gosub_stack(const AsMachine *m, uint16_t *numbers, int cap, int *count) {
+    int n = 0;
+    int i;
+    if (count) *count = 0;
+    if (!m) return;
+    for (i = 0; i < m->sp; i++) {
+        const AsLine *ln = m->stack[i].line;
+        if (m->stack[i].kind != 1) continue;
+        if (!ln || ln == &m->direct_line) continue;
+        if (numbers && n < cap) numbers[n] = ln->number;
+        n++;
+    }
+    if (count) *count = n;
+}
+
 void as_machine_edited(AsMachine *m) {
     int drop = m->paused || m->can_cont;
     m->can_cont = 0;
@@ -1625,6 +1779,7 @@ void as_machine_edited(AsMachine *m) {
     m->step = 0;
     m->line = NULL;
     m->sp = 0;
+    silence_tone(m);
     if (m->screen) m->screen->cursor_on = 0;
     if (drop) m->status[0] = 0;
 }

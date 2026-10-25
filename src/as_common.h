@@ -29,7 +29,8 @@ enum {
     AS_PAUSED,
     AS_END,
     AS_INPUT,
-    AS_GET
+    AS_GET,
+    AS_DELAY
 };
 
 enum {
@@ -57,7 +58,8 @@ enum {
 enum {
     AS_CLS_PLAIN = 0,
     AS_CLS_KEYWORD = 1,
-    AS_CLS_VARIABLE = 2
+    AS_CLS_VARIABLE = 2,
+    AS_CLS_REMARK = 3
 };
 
 const char *as_error_text(int err);

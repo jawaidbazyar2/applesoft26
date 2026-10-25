@@ -2,11 +2,98 @@
 
 #import "as_font.h"
 
+#import <AudioToolbox/AudioToolbox.h>
+
+#include <stdatomic.h>
 #include <stdlib.h>
+#include <string.h>
+
+static const double kToneRate = 22050.0;
+
+typedef struct ToneGen {
+    AudioQueueRef queue;
+    double phase;
+    double env;
+    double held;
+    _Atomic double hz;
+    int started;
+} ToneGen;
+
+static void tone_fill(void *user, AudioQueueRef q, AudioQueueBufferRef buf) {
+    ToneGen *g = (ToneGen *)user;
+    int16_t *s = (int16_t *)buf->mAudioData;
+    UInt32 n = buf->mAudioDataBytesCapacity / (UInt32)sizeof(int16_t);
+    UInt32 i;
+    double hz = atomic_load_explicit(&g->hz, memory_order_relaxed);
+    double target;
+    if (!(hz > 0)) hz = 0;
+    if (hz > 8000) hz = 8000;
+    if (hz > 0) g->held = hz;
+    target = hz > 0 ? 7000.0 : 0.0;
+    for (i = 0; i < n; i++) {
+        double on = 0;
+        g->env += (target - g->env) * 0.008;
+        if (g->held > 0) {
+            g->phase += g->held / kToneRate;
+            if (g->phase >= 1) g->phase -= 1;
+            on = g->phase < 0.5 ? 1 : -1;
+        }
+        s[i] = (int16_t)(on * g->env);
+        if (hz <= 0 && g->env < 8) g->held = 0;
+    }
+    buf->mAudioDataByteSize = n * (UInt32)sizeof(int16_t);
+    AudioQueueEnqueueBuffer(q, buf, 0, NULL);
+}
+
+static int tone_open(ToneGen *g) {
+    AudioStreamBasicDescription fmt;
+    int i;
+    memset(&fmt, 0, sizeof fmt);
+    fmt.mSampleRate = kToneRate;
+    fmt.mFormatID = kAudioFormatLinearPCM;
+    fmt.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
+    fmt.mBitsPerChannel = 16;
+    fmt.mChannelsPerFrame = 1;
+    fmt.mFramesPerPacket = 1;
+    fmt.mBytesPerFrame = 2;
+    fmt.mBytesPerPacket = 2;
+    if (AudioQueueNewOutput(&fmt, tone_fill, g, NULL, NULL, 0, &g->queue)) return -1;
+    for (i = 0; i < 3; i++) {
+        AudioQueueBufferRef buf = NULL;
+        if (AudioQueueAllocateBuffer(g->queue, 1024, &buf) || !buf) {
+            AudioQueueDispose(g->queue, true);
+            g->queue = NULL;
+            return -1;
+        }
+        tone_fill(g, g->queue, buf);
+    }
+    return 0;
+}
+
+static void tone_set(ToneGen *g, double hz) {
+    if (!(hz > 0)) hz = 0;
+    atomic_store_explicit(&g->hz, hz, memory_order_relaxed);
+    if (hz <= 0 && !g->queue) return;
+    if (!g->queue && tone_open(g) != 0) return;
+    if (hz > 0 && !g->started) {
+        AudioQueueStart(g->queue, NULL);
+        g->started = 1;
+    }
+}
+
+static void tone_free(ToneGen *g) {
+    if (!g->queue) return;
+    atomic_store_explicit(&g->hz, 0, memory_order_relaxed);
+    AudioQueueStop(g->queue, true);
+    AudioQueueDispose(g->queue, true);
+    g->queue = NULL;
+    g->started = 0;
+}
 
 @implementation RunWindow {
     NSWindow *_window;
     RunView *_view;
+    ToneGen _tone;
 }
 
 - (NSWindow *)window { return _window; }
@@ -35,6 +122,18 @@
 - (void)show {
     [_window makeKeyAndOrderFront:nil];
     [_window makeFirstResponder:_view];
+}
+
+- (void)orderFront {
+    [_window orderFront:nil];
+}
+
+- (void)syncTone {
+    tone_set(&_tone, _view.screen ? _view.screen->tone_hz : 0);
+}
+
+- (void)dealloc {
+    tone_free(&_tone);
 }
 
 @end
@@ -115,7 +214,7 @@ static void draw_image(CGImageRef img, NSRect dest) {
     if (!img) return;
     c = NSGraphicsContext.currentContext.CGContext;
     CGContextSaveGState(c);
-    CGContextSetInterpolationQuality(c, kCGInterpolationNone);
+    CGContextSetInterpolationQuality(c, kCGInterpolationLow);
     CGContextDrawImage(c, dest, img);
     CGContextRestoreGState(c);
 }
@@ -124,7 +223,7 @@ static NSRect fit_aspect(NSRect bounds, CGFloat w, CGFloat h) {
     CGFloat s, dw, dh;
     if (w < 1 || h < 1) return bounds;
     s = MIN(bounds.size.width / w, bounds.size.height / h);
-    if (s >= 1.0) s = floor(s);
+    if (s < 0.05) s = 0.05;
     dw = w * s;
     dh = h * s;
     return NSMakeRect(bounds.origin.x + (bounds.size.width - dw) / 2.0,
@@ -256,7 +355,6 @@ static void paint_buffer(uint8_t *px, int w, int h, NSRect dest, CGColorSpaceRef
     int y, x;
     scale = MIN(self.bounds.size.width / (CGFloat)(gw > 280 ? gw : 280),
                 self.bounds.size.height / (CGFloat)(gh + textH));
-    if (scale >= 1.0) scale = floor(scale);
     if (scale < 0.05) scale = 0.05;
     totalH = (gh + textH) * scale;
     maxW = (gw > 280 ? gw : 280) * scale;

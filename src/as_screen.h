@@ -36,6 +36,7 @@ typedef struct AsScreen {
     int cursor_on;
     int flash_phase;
     int bell;
+    double tone_hz; /* square wave for the run window; 0 is silent */
     int pdl[2];
     int btn0, btn1;
     int key_strobe;

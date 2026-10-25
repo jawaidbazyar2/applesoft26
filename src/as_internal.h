@@ -62,6 +62,9 @@ struct AsMachine {
     AsLine *cont_line;
     size_t cont_pc;
     int wait;
+    double wait_until; /* monotonic deadline, or remaining seconds while frozen */
+    double tone_hz;    /* square wave requested by & TONE; 0 is silent */
+    int wait_frozen;
     int input_shown;
     int input_ready;
     char input_line[256];

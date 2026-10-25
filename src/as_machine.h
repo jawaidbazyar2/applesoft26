@@ -22,6 +22,10 @@ int as_machine_waiting(const AsMachine *m);
 uint16_t as_machine_line(const AsMachine *m);
 const char *as_machine_status(const AsMachine *m);
 
+/* GOSUB callers, outermost first. Skips FOR frames and immediate-mode lines.
+   Writes min(depth, cap) line numbers. *count is the full caller depth. */
+void as_machine_gosub_stack(const AsMachine *m, uint16_t *numbers, int cap, int *count);
+
 /* Keyboard from the run window. Echoes INPUT, satisfies GET, else sets the strobe. */
 void as_machine_keydown(AsMachine *m, int ch);
 

@@ -105,6 +105,30 @@ static void cr(AsScreen *s) {
     }
 }
 
+/* Ctrl-K: blank from the cursor through the end of the text window. */
+static void clear_to_window_end(AsScreen *s) {
+    int y, x;
+    int left = s->wnd_left;
+    int right = s->wnd_left + s->wnd_width;
+    int top = s->wnd_top;
+    int bot = s->wnd_btm;
+    if (left < 0) left = 0;
+    if (right > 40) right = 40;
+    if (top < 0) top = 0;
+    if (bot > 24) bot = 24;
+    for (y = top; y < bot; y++) {
+        int x0;
+        if (y < s->cur_y) continue;
+        x0 = (y == s->cur_y) ? s->cur_x : left;
+        if (x0 < left) x0 = left;
+        for (x = x0; x < right; x++) {
+            if (x < 0 || x > 39) continue;
+            s->cell[y][x].ch = ' ';
+            s->cell[y][x].style = 0;
+        }
+    }
+}
+
 void as_screen_putc(AsScreen *s, int ch) {
     if (ch == '\r' || ch == '\n') {
         cr(s);
@@ -116,6 +140,10 @@ void as_screen_putc(AsScreen *s, int ch) {
     }
     if (ch == 7) {
         s->bell++;
+        return;
+    }
+    if (ch == 11) {
+        clear_to_window_end(s);
         return;
     }
     if (ch < 32 || ch > 126) return;

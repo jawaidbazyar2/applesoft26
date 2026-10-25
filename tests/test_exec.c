@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static int g_fail;
 
@@ -78,6 +79,12 @@ static void test_math(void) {
     expect_row(s5, n5, 1, 0, "-2");
     expect_row(s6, n6, 2, 0, "ABCD");
     expect_row(s7, n7, 2, 0, " 10");
+}
+
+static void test_multi_next(void) {
+    const char *s1[] = {"FOR X=1 TO 2: FOR S=1 TO 2", "PRINT S+10*X;", "NEXT S,X", "PRINT \"!\";"};
+    unsigned n1[] = {10, 20, 30, 40};
+    expect_row(s1, n1, 4, 0, " 11  12  21  22 !");
 }
 
 static void test_flow(void) {
@@ -381,15 +388,353 @@ static void test_pdl_key_wait(void) {
     as_screen_free(s);
 }
 
+static void test_pr_in(void) {
+    const char *src[] = {"PR# 0", "IN# 3", "PR# 1+1:IN# A", "PRINT \"OK\""};
+    unsigned nums[] = {10, 20, 30, 40};
+    AsTokenized t;
+    size_t at = 0;
+    expect_row(src, nums, 4, 0, "OK");
+    as_tokenize("PR#", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_ERR_SYNTAX);
+    as_tokenized_free(&t);
+    as_tokenize("IN# 0", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_OK);
+    as_tokenized_free(&t);
+}
+
+static void sleep_ms(int ms) {
+    struct timespec ts;
+    ts.tv_sec = ms / 1000;
+    ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+    nanosleep(&ts, NULL);
+}
+
+static void pump(AsMachine *m) {
+    int g = 0;
+    while (as_machine_running(m) && g++ < 100000) {
+        int rc = as_machine_quantum(m, 0.01);
+        if (rc == AS_DELAY) {
+            sleep_ms(5);
+            continue;
+        }
+        if (rc != AS_OK) break;
+    }
+}
+
+static void test_amp(void) {
+    AsScreen *s = as_screen_new();
+    AsProgram *p = as_program_new();
+    AsMachine *m;
+    AsTokenized t;
+    char got[48];
+    size_t at = 0;
+    int rc;
+    const char *zero[] = {"& DELAY 0: PRINT \"Z\""};
+    unsigned zn[] = {10};
+
+    expect_row(zero, zn, 1, 0, "Z");
+
+    add_line(p, 10, "& DELAY 0.08: PRINT \"X\"");
+    m = as_machine_new(p, s);
+    as_machine_run(m);
+    rc = as_machine_quantum(m, 0.01);
+    CHECK(rc == AS_DELAY);
+    CHECK(as_machine_waiting(m) == AS_DELAY);
+    CHECK(s->tone_hz == 0);
+    row_trim(s, 0, got);
+    CHECK(strcmp(got, "") == 0);
+    sleep_ms(30);
+    rc = as_machine_quantum(m, 0.01);
+    CHECK(rc == AS_DELAY);
+    row_trim(s, 0, got);
+    CHECK(strcmp(got, "") == 0);
+    sleep_ms(100);
+    pump(m);
+    row_trim(s, 0, got);
+    CHECK(strcmp(got, "X") == 0);
+    CHECK(!as_machine_running(m));
+    as_machine_free(m);
+    as_program_free(p);
+    as_screen_free(s);
+
+    s = as_screen_new();
+    p = as_program_new();
+    add_line(p, 10, "A=440");
+    add_line(p, 20, "& TONE A, 0.06: PRINT \"N\"");
+    m = as_machine_new(p, s);
+    as_machine_run(m);
+    rc = AS_OK;
+    {
+        int g = 0;
+        while (as_machine_running(m) && g++ < 1000) {
+            rc = as_machine_quantum(m, 0.01);
+            if (rc == AS_DELAY) break;
+            if (rc != AS_OK) break;
+        }
+    }
+    CHECK(rc == AS_DELAY);
+    CHECK(s->tone_hz == 440);
+    sleep_ms(20);
+    CHECK(as_machine_quantum(m, 0.01) == AS_DELAY);
+    CHECK(s->tone_hz == 440);
+    sleep_ms(80);
+    pump(m);
+    row_trim(s, 0, got);
+    CHECK(strcmp(got, "N") == 0);
+    CHECK(s->tone_hz == 0);
+    as_machine_free(m);
+    as_program_free(p);
+    as_screen_free(s);
+
+    s = as_screen_new();
+    p = as_program_new();
+    add_line(p, 10, "& TONE 0, 0.05: PRINT \"R\"");
+    m = as_machine_new(p, s);
+    as_machine_run(m);
+    rc = as_machine_quantum(m, 0.01);
+    CHECK(rc == AS_DELAY);
+    CHECK(s->tone_hz == 0);
+    sleep_ms(80);
+    pump(m);
+    row_trim(s, 0, got);
+    CHECK(strcmp(got, "R") == 0);
+    as_machine_free(m);
+    as_program_free(p);
+    as_screen_free(s);
+
+    s = as_screen_new();
+    p = as_program_new();
+    add_line(p, 10, "& TONE 440, 0.25: PRINT \"P\"");
+    m = as_machine_new(p, s);
+    as_machine_run(m);
+    CHECK(as_machine_quantum(m, 0.01) == AS_DELAY);
+    CHECK(s->tone_hz == 440);
+    as_machine_pause(m);
+    CHECK(s->tone_hz == 0);
+    CHECK(as_machine_paused(m));
+    sleep_ms(300);
+    as_machine_cont(m);
+    CHECK(s->tone_hz == 440);
+    CHECK(as_machine_quantum(m, 0.01) == AS_DELAY);
+    row_trim(s, 0, got);
+    CHECK(strcmp(got, "") == 0);
+    sleep_ms(300);
+    pump(m);
+    row_trim(s, 0, got);
+    CHECK(strcmp(got, "P") == 0);
+    CHECK(s->tone_hz == 0);
+    as_machine_free(m);
+    as_program_free(p);
+    as_screen_free(s);
+
+    as_tokenize("& NOPE 1", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_ERR_SYNTAX);
+    as_tokenized_free(&t);
+    as_tokenize("& DELAY", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_ERR_SYNTAX);
+    as_tokenized_free(&t);
+    as_tokenize("& DELAY -1", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_ERR_ILLEGAL_QUANTITY);
+    as_tokenized_free(&t);
+    as_tokenize("& TONE 440", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_ERR_SYNTAX);
+    as_tokenized_free(&t);
+    as_tokenize("& TONE 9000, 0.1", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_ERR_ILLEGAL_QUANTITY);
+    as_tokenized_free(&t);
+    as_tokenize("& DELAY 0.25", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_OK);
+    as_tokenized_free(&t);
+    as_tokenize("& TONE SIN(1), 0.05", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_OK);
+    as_tokenized_free(&t);
+    as_tokenize("IF 0 THEN & DELAY 1: PRINT \"Q\"", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_OK);
+    as_tokenized_free(&t);
+}
+
+static void test_prompt(void) {
+    AsScreen *s = as_screen_new();
+    AsProgram *p = as_program_new();
+    AsMachine *m = as_machine_new(p, s);
+    int kind = 0, g = 0;
+    char got[48];
+    CHECK(as_machine_prompt(m, "A=5", &kind) == AS_OK);
+    CHECK(kind == 2);
+    while (as_machine_running(m) && g++ < 1000) {
+        if (as_machine_quantum(m, 0.05) != AS_OK) break;
+    }
+    CHECK(as_machine_prompt(m, "PRINT A", &kind) == AS_OK);
+    g = 0;
+    while (as_machine_running(m) && g++ < 1000) {
+        if (as_machine_quantum(m, 0.05) != AS_OK) break;
+    }
+    row_trim(s, 0, got);
+    CHECK(strcmp(got, " 5") == 0);
+
+    CHECK(as_machine_prompt(m, "10 PRINT \"HI\"", &kind) == AS_OK);
+    CHECK(kind == 1);
+    CHECK(as_program_count(p) == 1);
+    CHECK(as_program_at(p, 0)->number == 10);
+    CHECK(as_machine_prompt(m, "20 END", &kind) == AS_OK);
+    CHECK(as_machine_prompt(m, "GOTO 10", &kind) == AS_OK);
+    g = 0;
+    while (as_machine_running(m) && g++ < 1000) {
+        if (as_machine_quantum(m, 0.05) != AS_OK) break;
+    }
+    row_trim(s, 1, got);
+    CHECK(strcmp(got, "HI") == 0);
+
+    CHECK(as_machine_prompt(m, "10", &kind) == AS_OK);
+    CHECK(kind == 1);
+    CHECK(as_program_find(p, 10) == NULL);
+    CHECK(as_program_find(p, 20) != NULL);
+
+    CHECK(as_machine_prompt(m, "INPUT A", &kind) == AS_OK);
+    g = 0;
+    while (as_machine_running(m) && g++ < 1000) {
+        if (as_machine_quantum(m, 0.05) != AS_OK) break;
+    }
+    CHECK(strstr(as_machine_status(m), "ILLEGAL DIRECT") != NULL);
+    CHECK(as_machine_prompt(m, "70000 PRINT 1", &kind) == AS_ERR_SYNTAX);
+
+    as_machine_free(m);
+    as_program_free(p);
+    as_screen_free(s);
+}
+
+static void test_ctrl_k(void) {
+    const char *src[] = {"PRINT \"ABCDEFGH\"", "PRINT \"12345678\"", "PRINT \"ZYXWVUTS\"",
+                          "VTAB 1: HTAB 4", "PRINT CHR$(11);\"Q\";"};
+    unsigned nums[] = {10, 20, 30, 40, 50};
+    AsScreen *s = as_screen_new();
+    AsProgram *p = as_program_new();
+    AsMachine *m;
+    char r0[48], r1[48], r2[48];
+    int i, g = 0, y, x, bad;
+    for (i = 0; i < 5; i++) add_line(p, nums[i], src[i]);
+    m = as_machine_new(p, s);
+    as_machine_run(m);
+    while (as_machine_running(m) && g++ < 100000) {
+        if (as_machine_quantum(m, 0.05) != AS_OK) break;
+    }
+    row_trim(s, 0, r0);
+    row_trim(s, 1, r1);
+    row_trim(s, 2, r2);
+    CHECK(strcmp(r0, "ABCQ") == 0);
+    CHECK(strcmp(r1, "") == 0);
+    CHECK(strcmp(r2, "") == 0);
+    CHECK(s->cur_x == 4);
+    CHECK(s->cur_y == 0);
+    as_machine_free(m);
+    as_program_free(p);
+    as_screen_free(s);
+
+    s = as_screen_new();
+    for (y = 0; y < 24; y++) {
+        for (x = 0; x < 40; x++) {
+            s->cell[y][x].ch = 'X';
+            s->cell[y][x].style = 2;
+        }
+    }
+    s->wnd_left = 2;
+    s->wnd_width = 5;
+    s->wnd_top = 3;
+    s->wnd_btm = 6;
+    s->cur_x = 4;
+    s->cur_y = 4;
+    as_screen_putc(s, 11);
+    CHECK(s->cur_x == 4);
+    CHECK(s->cur_y == 4);
+    CHECK(s->bell == 0);
+    bad = 0;
+    for (y = 0; y < 24; y++) {
+        for (x = 0; x < 40; x++) {
+            int cleared = (y == 4 && x >= 4 && x < 7) || (y == 5 && x >= 2 && x < 7);
+            if (cleared) {
+                if (s->cell[y][x].ch != ' ' || s->cell[y][x].style != 0) bad++;
+            } else if (s->cell[y][x].ch != 'X' || s->cell[y][x].style != 2) {
+                bad++;
+            }
+        }
+    }
+    CHECK(bad == 0);
+
+    for (y = 0; y < 24; y++) {
+        for (x = 0; x < 40; x++) {
+            s->cell[y][x].ch = 'X';
+            s->cell[y][x].style = 2;
+        }
+    }
+    s->cur_x = 4;
+    s->cur_y = 5;
+    as_screen_putc(s, 11);
+    bad = 0;
+    for (y = 0; y < 24; y++) {
+        for (x = 0; x < 40; x++) {
+            int cleared = (y == 5 && x >= 4 && x < 7);
+            if (cleared) {
+                if (s->cell[y][x].ch != ' ' || s->cell[y][x].style != 0) bad++;
+            } else if (s->cell[y][x].ch != 'X' || s->cell[y][x].style != 2) {
+                bad++;
+            }
+        }
+    }
+    CHECK(bad == 0);
+    CHECK(s->cur_x == 4);
+    CHECK(s->cur_y == 5);
+    as_screen_free(s);
+}
+
+static void test_gosub_stack(void) {
+    AsScreen *s = as_screen_new();
+    AsProgram *p = as_program_new();
+    AsMachine *m;
+    uint16_t nums[8];
+    int count = -1;
+    int guard = 0;
+    size_t i, n;
+    add_line(p, 10, "GOSUB 100");
+    add_line(p, 100, "FOR I=1 TO 1: GOSUB 200: NEXT");
+    add_line(p, 200, "PRINT \"IN\"");
+    n = as_program_count(p);
+    for (i = 0; i < n; i++) {
+        if (as_program_at(p, i)->number == 200) as_program_set_break(p, i, 1);
+    }
+    m = as_machine_new(p, s);
+    as_machine_gosub_stack(m, nums, 8, &count);
+    CHECK(count == 0);
+    as_machine_run(m);
+    while (as_machine_running(m) && guard++ < 100000) {
+        if (as_machine_quantum(m, 0.05) != AS_OK) break;
+    }
+    CHECK(as_machine_paused(m));
+    CHECK(as_machine_line(m) == 200);
+    count = -1;
+    as_machine_gosub_stack(m, nums, 8, &count);
+    CHECK(count == 2);
+    CHECK(nums[0] == 10);
+    CHECK(nums[1] == 100);
+    as_machine_free(m);
+    as_program_free(p);
+    as_screen_free(s);
+}
+
 int main(void) {
     test_math();
+    test_multi_next();
     test_flow();
+    test_gosub_stack();
     test_data_array();
     test_graphics_and_call();
     test_input();
     test_check();
     test_peek();
     test_pdl_key_wait();
+    test_pr_in();
+    test_amp();
+    test_prompt();
+    test_ctrl_k();
     if (g_fail) {
         fprintf(stderr, "%d exec failure(s)\n", g_fail);
         return 1;

@@ -28,7 +28,7 @@ if(APPLE)
         src/EditorController.m
         src/RunWindow.m
     )
-    target_link_libraries(applesoft PRIVATE applesoft_core "-framework Cocoa" "-framework UniformTypeIdentifiers")
+    target_link_libraries(applesoft PRIVATE applesoft_core "-framework Cocoa" "-framework AudioToolbox" "-framework UniformTypeIdentifiers")
     target_compile_options(applesoft PRIVATE -fobjc-arc -Wall -Wextra)
     set_target_properties(applesoft PROPERTIES
         OUTPUT_NAME "AppleSoft"

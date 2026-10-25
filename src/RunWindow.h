@@ -17,4 +17,6 @@
 @property (nonatomic, strong, readonly) NSWindow *window;
 @property (nonatomic, strong, readonly) RunView *view;
 - (void)show;
+- (void)orderFront;
+- (void)syncTone;
 @end
