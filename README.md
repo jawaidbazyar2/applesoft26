@@ -1,8 +1,16 @@
 # AppleSoft Basic for MacOS
 
+If macOS refuses to open a downloaded `AppleSoft.app` ("Apple cannot check it for malicious software"), clear the quarantine flag and try again:
+
+```bash
+xattr -dr com.apple.quarantine AppleSoft.app
+```
+
+You can also Control-click the app and choose **Open**.
+
 A native macOS app that edits and runs AppleSoft BASIC. It is a compiled interpreter, not an emulator. The editor tokenizes each line the way AppleSoft does; the run window is an Apple II text screen that also supports GR and HGR graphics.
 
-Requires **macOS 11** or later, **CMake 3.20+**, and the Xcode command-line tools (`clang`).
+Requires **macOS 11** or later, **CMake 3.20+**, and the Xcode command-line tools (`clang`). The app is a universal binary (Apple Silicon and Intel).
 
 ## Build
 
