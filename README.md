@@ -55,7 +55,7 @@ When you Run, a second window opens for program input and output. It uses the Ap
 Two sample programs are in `Samples/`:
 
 - `LEMONADE.abas` — the classic lemonade-stand game
-- `BRIANSTHEME.abas` — a short music demo that uses `& TONE`
+- `BRIANSTHEME.abas` — the classic Moire pattern demo
 
 Open either from **File → Open…**.
 
