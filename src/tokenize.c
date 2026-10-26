@@ -8,7 +8,7 @@
 
 /* Longest extension name at s[i], or 0. More letters may follow (the argument). */
 static size_t ext_command(const char *s, size_t n, size_t i) {
-    static const char *const words[] = {"DELAY", "TONE"};
+    static const char *const words[] = {"DELAY", "TONE", "DHGR", "DHCOLOR", "DHPLOT"};
     size_t w, best = 0;
     for (w = 0; w < sizeof words / sizeof words[0]; w++) {
         size_t k = 0;
@@ -150,7 +150,8 @@ void as_tokenize(const char *src, AsTokenized *out) {
             continue;
         }
         /* The word after & is an extension name, stored as letters. DEL and TO
-           would otherwise swallow DELAY and TONE. */
+           would otherwise swallow DELAY and TONE, and HGR/PLOT/COLOR would
+           split DHGR, DHPLOT and DHCOLOR. */
         if (amp_name) {
             if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
                 size_t cmd = ext_command(src, n, i);

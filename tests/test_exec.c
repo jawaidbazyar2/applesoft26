@@ -571,6 +571,82 @@ static void test_amp(void) {
     as_tokenized_free(&t);
 }
 
+static void test_dhgr(void) {
+    AsScreen *s = as_screen_new();
+    AsProgram *p = as_program_new();
+    AsMachine *m;
+    AsTokenized t;
+    size_t at = 0;
+    int g = 0;
+    add_line(p, 10, "& DHGR");
+    add_line(p, 20, "& DHCOLOR = 12");
+    add_line(p, 30, "& DHPLOT 0,0 TO 559,0");
+    add_line(p, 40, "&DHCOLOR=9: & DHPLOT 559,191");
+    add_line(p, 50, "& DHPLOT TO 559,100: HCOLOR= 3: HPLOT 1,1");
+    m = as_machine_new(p, s);
+    as_machine_run(m);
+    while (as_machine_running(m) && g++ < 10000) {
+        if (as_machine_quantum(m, 0.05) != AS_OK) break;
+    }
+    CHECK(s->disp == AS_DISP_DHGR);
+    CHECK(s->gw == 560 && s->gh == 192 && s->mixed);
+    CHECK(s->pix && s->pix[0] == 12 && s->pix[559] == 12 && s->pix[300] == 12);
+    CHECK(s->pix[191 * 560 + 559] == 9 && s->pix[100 * 560 + 559] == 9);
+    CHECK(s->pix[1 * 560 + 1] == 3);
+    /* POKE -16302,0 (full screen) keeps double hi-res. */
+    as_screen_poke(s, 0xC052, 0);
+    CHECK(s->disp == AS_DISP_DHGR && !s->mixed);
+    as_machine_free(m);
+    as_program_free(p);
+    as_screen_free(s);
+
+    /* DHPLOT outside DHGR mode, and off-screen, are illegal quantities. */
+    s = as_screen_new();
+    p = as_program_new();
+    add_line(p, 10, "HGR: & DHPLOT 1,1");
+    m = as_machine_new(p, s);
+    as_machine_run(m);
+    g = 0;
+    while (as_machine_running(m) && g++ < 10000) {
+        if (as_machine_quantum(m, 0.05) != AS_OK) break;
+    }
+    CHECK(s->pix && s->pix[281] == 0);
+    as_machine_free(m);
+    as_program_free(p);
+    as_screen_free(s);
+
+    s = as_screen_new();
+    p = as_program_new();
+    add_line(p, 10, "& DHGR: & DHCOLOR 15: & DHPLOT 560,0");
+    add_line(p, 20, "& DHPLOT 5,5");
+    m = as_machine_new(p, s);
+    as_machine_run(m);
+    g = 0;
+    while (as_machine_running(m) && g++ < 10000) {
+        if (as_machine_quantum(m, 0.05) != AS_OK) break;
+    }
+    CHECK(s->pix && s->pix[5 * 560 + 5] == 0);
+    as_machine_free(m);
+    as_program_free(p);
+    as_screen_free(s);
+
+    as_tokenize("& DHCOLOR = 16", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_ERR_ILLEGAL_QUANTITY);
+    as_tokenized_free(&t);
+    as_tokenize("& DHPLOT", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_ERR_SYNTAX);
+    as_tokenized_free(&t);
+    as_tokenize("& DHGR 1", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_ERR_SYNTAX);
+    as_tokenized_free(&t);
+    as_tokenize("& DHPLOT X,Y TO X+10,Y*2 TO 0,0", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_OK);
+    as_tokenized_free(&t);
+    as_tokenize("IF A THEN & DHGR: & DHCOLOR= A: & DHPLOT TO 3,4", &t);
+    CHECK(as_check_line(t.bytes, t.len, &at) == AS_OK);
+    as_tokenized_free(&t);
+}
+
 static void test_prompt(void) {
     AsScreen *s = as_screen_new();
     AsProgram *p = as_program_new();
@@ -751,6 +827,7 @@ int main(void) {
     test_pdl_key_wait();
     test_pr_in();
     test_amp();
+    test_dhgr();
     test_prompt();
     test_ctrl_k();
     if (g_fail) {

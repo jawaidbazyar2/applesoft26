@@ -83,6 +83,17 @@ static void test_roundtrip_text(void) {
     free(text);
     as_tokenized_free(&t);
 
+    as_tokenize("&dhplot 0,0 to 559,191", &t);
+    CHECK(t.len >= 7 && t.bytes[0] == TK_AMP && memcmp(t.bytes + 1, "DHPLOT", 6) == 0);
+    as_detokenize(t.bytes, t.len, &text);
+    CHECK(text && strcmp(text, "& DHPLOT 0,0 TO 559,191") == 0);
+    free(text);
+    as_tokenized_free(&t);
+    as_tokenize("& DHGR: & DHCOLOR=5", &t);
+    as_detokenize(t.bytes, t.len, &text);
+    CHECK(text && strcmp(text, "& DHGR : & DHCOLOR = 5") == 0);
+    free(text);
+    as_tokenized_free(&t);
     as_tokenize("& TONE 440,0.2", &t);
     as_detokenize(t.bytes, t.len, &text);
     CHECK(text && strcmp(text, "& TONE 440,0.2") == 0);

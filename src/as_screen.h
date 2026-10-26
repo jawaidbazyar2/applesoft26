@@ -10,7 +10,8 @@ enum {
     AS_DISP_HGR,
     AS_DISP_HGR2,
     AS_DISP_H320,
-    AS_DISP_H640
+    AS_DISP_H640,
+    AS_DISP_DHGR  /* & DHGR: 560x192 double hi-res, 16 colors */
 };
 
 typedef struct AsCell {
@@ -53,6 +54,7 @@ void as_screen_comma_tab(AsScreen *s);
 void as_screen_text_mode(AsScreen *s);
 void as_screen_gr(AsScreen *s, int cols, int rows);
 void as_screen_hgr(AsScreen *s, int which);
+void as_screen_dhgr(AsScreen *s);
 int as_screen_plot(AsScreen *s, int x, int y);
 int as_screen_hlin(AsScreen *s, int x1, int x2, int y);
 int as_screen_vlin(AsScreen *s, int y1, int y2, int x);
