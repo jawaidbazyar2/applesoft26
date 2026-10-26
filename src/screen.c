@@ -20,7 +20,8 @@ int as_screen_is_lores(const AsScreen *s) {
 }
 
 int as_screen_is_hires(const AsScreen *s) {
-    return s->disp == AS_DISP_HGR || s->disp == AS_DISP_HGR2 || s->disp == AS_DISP_H320 || s->disp == AS_DISP_H640;
+    return s->disp == AS_DISP_HGR || s->disp == AS_DISP_HGR2 || s->disp == AS_DISP_H320 || s->disp == AS_DISP_H640 ||
+           s->disp == AS_DISP_DHGR;
 }
 
 static void clear_cells(AsScreen *s) {
@@ -254,6 +255,19 @@ void as_screen_hgr(AsScreen *s, int which) {
     window_mixed(s);
 }
 
+/* Double hi-res: 560x192 with the 16 lo-res colors, clean (one color per pixel).
+   Mixed like HGR: the top 160 rows show above four text lines.
+   POKE -16302,0 shows all 192 rows. */
+void as_screen_dhgr(AsScreen *s) {
+    s->graphics_on = 1;
+    s->hires = 1;
+    s->disp = AS_DISP_DHGR;
+    s->mixed = 1;
+    s->page2 = 0;
+    alloc_pix(s, 560, 192);
+    window_mixed(s);
+}
+
 static int in_pix(const AsScreen *s, int x, int y) {
     return s->pix && x >= 0 && y >= 0 && x < s->gw && y < s->gh;
 }
@@ -319,7 +333,8 @@ static void bresenham(AsScreen *s, int x0, int y0, int x1, int y1, int color) {
 }
 
 static int hcolor_ok(const AsScreen *s) {
-    if (s->disp == AS_DISP_H320 || s->disp == AS_DISP_H640) return s->hcolor >= 0 && s->hcolor <= 15;
+    if (s->disp == AS_DISP_H320 || s->disp == AS_DISP_H640 || s->disp == AS_DISP_DHGR)
+        return s->hcolor >= 0 && s->hcolor <= 15;
     return s->hcolor >= 0 && s->hcolor <= 7;
 }
 
@@ -357,7 +372,9 @@ static void resolve_soft(AsScreen *s) {
         s->mixed = 0;
         return;
     }
-    if (s->disp == AS_DISP_GR80 || s->disp == AS_DISP_H320 || s->disp == AS_DISP_H640) return;
+    if (s->disp == AS_DISP_GR80 || s->disp == AS_DISP_H320 || s->disp == AS_DISP_H640 ||
+        s->disp == AS_DISP_DHGR)
+        return;
     if (s->hires) {
         if (s->page2 && !s->mixed) s->disp = AS_DISP_HGR2;
         else {

@@ -56,6 +56,7 @@ Two sample programs are in `Samples/`:
 
 - `LEMONADE.abas` — the classic lemonade-stand game
 - `BRIANSTHEME.abas` — the classic Moire pattern demo
+- `DHGRDEMO.abas` — double hi-res color bars and a fan of lines (`& DHGR`)
 
 Open either from **File → Open…**.
 
@@ -77,7 +78,7 @@ These display modes are supported. Every mode is drawn in the traditional Apple 
 
 ## Custom `&` commands
 
-AppleSoft’s `&` hook is used for two extensions. After `&`, the name is stored as letters (not as a keyword), so `DELAY` is not eaten by `DEL` and `TONE` is not eaten by `TO`.
+AppleSoft’s `&` hook is used for these extensions. After `&`, the name is stored as letters (not as a keyword), so `DELAY` is not eaten by `DEL` and `TONE` is not eaten by `TO`.
 
 ### `& DELAY seconds`
 
@@ -103,6 +104,24 @@ Plays a square-wave tone at `hertz` for `seconds`, and waits that long before th
 20 & TONE A, 0.25
 30 & TONE 0, 0.1
 40 & TONE 880, 0.25
+```
+
+### Double hi-res: `& DHGR`, `& DHCOLOR`, `& DHPLOT`
+
+- `& DHGR` — switches to double hi-res: **560×192, 16 colors** (the lo-res palette, 0–15), and clears it to black. Like `HGR`, it is mixed: the top 160 rows show above four text lines. `POKE 49234,0` shows all 192 rows, `POKE 49235,0` brings the text lines back.
+- `& DHCOLOR = n` — sets the drawing color, 0–15 (the `=` is optional). It is the same color as `HCOLOR=`.
+- `& DHPLOT x,y` — plots a point. `x` is 0–559, `y` is 0–191.
+- `& DHPLOT x1,y1 TO x2,y2 [TO x3,y3 ...]` — draws lines, like `HPLOT`.
+- `& DHPLOT TO x,y` — draws a line from the last point plotted.
+
+`& DHPLOT` outside `& DHGR` mode, or off the screen, is an illegal quantity. `HPLOT` and `HCOLOR=` also work in double hi-res mode. As with the other modes, it is drawn clean — one color per pixel, without the Apple IIe’s 4-pixel color artifacts.
+
+```basic
+10 & DHGR
+20 FOR C = 0 TO 15
+30 & DHCOLOR = C
+40 & DHPLOT C * 35,0 TO 280,159
+50 NEXT C
 ```
 
 Any other word after `&` is a syntax error (`& NOPE 1`).

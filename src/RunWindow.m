@@ -382,6 +382,37 @@ static void paint_buffer(uint8_t *px, int w, int h, NSRect dest, CGColorSpaceRef
     free(px);
 }
 
+/* & DHGR: 560x192, drawn into the 280x192 frame (two pixels per classic HGR pixel).
+   Mixed mode shows the top 160 rows, like HGR, above four text lines. */
+- (void)drawDouble:(AsScreen *)s cs:(CGColorSpaceRef)cs flash:(int)flash {
+    int rows = s->gh;
+    int x, y;
+    NSRect frame, gfxRect;
+    CGFloat textH = 0;
+    uint8_t *px;
+    if (!s->pix || s->gw < 1 || s->gh < 1) return;
+    frame = fit_aspect(self.bounds, 280, 192);
+    if (s->mixed) {
+        rows = s->gh > 160 ? 160 : s->gh;
+        textH = frame.size.height * (32.0 / 192.0);
+    }
+    gfxRect = NSMakeRect(frame.origin.x, frame.origin.y + textH, frame.size.width, frame.size.height - textH);
+    px = (uint8_t *)calloc((size_t)s->gw * (size_t)rows, 4);
+    if (!px) return;
+    for (y = 0; y < rows; y++) {
+        for (x = 0; x < s->gw; x++) put_px(px, s->gw, rows, x, y, color_of(s, s->pix[y * s->gw + x]));
+    }
+    paint_buffer(px, s->gw, rows, gfxRect, cs, kCGInterpolationNone);
+    free(px);
+    if (!s->mixed) return;
+    px = (uint8_t *)calloc(280u * 32u, 4);
+    if (!px) return;
+    draw_text(px, 280, 32, s, 20, 4, 0, flash);
+    paint_buffer(px, 280, 32, NSMakeRect(frame.origin.x, frame.origin.y, frame.size.width, textH), cs,
+                 kCGInterpolationLow);
+    free(px);
+}
+
 - (void)drawRect:(NSRect)dirty {
     CGColorSpaceRef cs;
     AsScreen *s;
@@ -401,6 +432,8 @@ static void paint_buffer(uint8_t *px, int w, int h, NSRect dest, CGColorSpaceRef
         }
     } else if (s->disp == AS_DISP_GR80 || s->disp == AS_DISP_H320 || s->disp == AS_DISP_H640) {
         [self drawExtended:s cs:cs flash:s->flash_phase];
+    } else if (s->disp == AS_DISP_DHGR) {
+        [self drawDouble:s cs:cs flash:s->flash_phase];
     } else {
         [self drawClassic:s cs:cs flash:s->flash_phase];
     }

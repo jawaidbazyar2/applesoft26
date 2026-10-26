@@ -1358,8 +1358,63 @@ static int stmt_tone(AsMachine *m) {
     return begin_wait(m, sec, hz);
 }
 
+/* & DHGR: 560x192 double hi-res, 16 colors, cleared to black, mixed text. */
+static int stmt_dhgr(AsMachine *m) {
+    skip_spaces(m);
+    if (!as_at_end(m)) return as_fail(m, AS_ERR_SYNTAX);
+    if (!m->check && m->screen) as_screen_dhgr(m->screen);
+    return AS_OK;
+}
+
+/* & DHCOLOR = n (the = is optional). 0-15, the lo-res palette. Shares HCOLOR. */
+static int stmt_dhcolor(AsMachine *m) {
+    int n, rc;
+    skip_spaces(m);
+    if (as_peekc(m) == TK_EQ) as_getc(m);
+    rc = eval_coord(m, &n);
+    if (rc) return rc;
+    if (!as_at_end(m)) return as_fail(m, AS_ERR_SYNTAX);
+    if (n < 0 || n > 15) return as_fail(m, AS_ERR_ILLEGAL_QUANTITY);
+    if (!m->check && m->screen) m->screen->hcolor = n;
+    return AS_OK;
+}
+
+/* & DHPLOT x,y [TO x,y]... and & DHPLOT TO x,y. Only in DHGR mode. */
+static int stmt_dhplot(AsMachine *m) {
+    int x, y, rc, first = 1;
+    skip_spaces(m);
+    if (!m->check && m->screen && m->screen->disp != AS_DISP_DHGR) return as_fail(m, AS_ERR_ILLEGAL_QUANTITY);
+    if (as_peekc(m) != TK_TO) {
+        rc = eval_coord(m, &x);
+        if (rc) return rc;
+        if (as_expect(m, ',')) return AS_ERR_SYNTAX;
+        rc = eval_coord(m, &y);
+        if (rc) return rc;
+        if (!m->check && m->screen) {
+            rc = as_screen_hplot(m->screen, x, y);
+            if (rc) return as_fail(m, rc);
+        }
+        first = 0;
+    }
+    while (as_peekc(m) == TK_TO) {
+        as_getc(m);
+        rc = eval_coord(m, &x);
+        if (rc) return rc;
+        if (as_expect(m, ',')) return AS_ERR_SYNTAX;
+        rc = eval_coord(m, &y);
+        if (rc) return rc;
+        if (!m->check && m->screen) {
+            rc = as_screen_hplot_to(m->screen, x, y);
+            if (rc) return as_fail(m, rc);
+        }
+        first = 0;
+    }
+    if (first || !as_at_end(m)) return as_fail(m, AS_ERR_SYNTAX);
+    return AS_OK;
+}
+
 static int take_ext(AsMachine *m, const char **name) {
-    static const char *const words[] = {"DELAY", "TONE"};
+    static const char *const words[] = {"DELAY", "TONE", "DHGR", "DHCOLOR", "DHPLOT"};
     size_t w, best = 0;
     const char *found = NULL;
     for (w = 0; w < sizeof words / sizeof words[0]; w++) {
@@ -1386,7 +1441,10 @@ static int stmt_amp(AsMachine *m) {
     uint8_t c;
     if (take_ext(m, &name)) {
         if (strcmp(name, "DELAY") == 0) return stmt_delay(m);
-        return stmt_tone(m);
+        if (strcmp(name, "TONE") == 0) return stmt_tone(m);
+        if (strcmp(name, "DHGR") == 0) return stmt_dhgr(m);
+        if (strcmp(name, "DHCOLOR") == 0) return stmt_dhcolor(m);
+        return stmt_dhplot(m);
     }
     c = as_peekc(m);
     if (c < 'A' || c > 'Z') return as_fail(m, AS_ERR_SYNTAX);
