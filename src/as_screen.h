@@ -9,6 +9,7 @@ enum {
     AS_DISP_GR80,
     AS_DISP_HGR,
     AS_DISP_HGR2,
+    AS_DISP_H320,
     AS_DISP_H640
 };
 

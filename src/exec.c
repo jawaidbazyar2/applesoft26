@@ -1128,7 +1128,7 @@ static int stmt_gr(AsMachine *m) {
     if (m->check) return AS_OK;
     if (!m->screen) return AS_OK;
     if (!saw || (cols == 40 && rows == 40)) as_screen_gr(m->screen, 40, 40);
-    else if (cols == 80 && rows == 80) as_screen_gr(m->screen, 80, 80);
+    else if (cols == 80 && rows == 50) as_screen_gr(m->screen, 80, 50);
     else return as_fail(m, AS_ERR_ILLEGAL_QUANTITY);
     return AS_OK;
 }
@@ -1149,6 +1149,7 @@ static int stmt_hgr(AsMachine *m) {
     if (m->check) return AS_OK;
     if (!m->screen) return AS_OK;
     if (!saw) as_screen_hgr(m->screen, 0);
+    else if (w == 320 && h == 200) as_screen_hgr(m->screen, 3);
     else if (w == 640 && h == 400) as_screen_hgr(m->screen, 2);
     else return as_fail(m, AS_ERR_ILLEGAL_QUANTITY);
     return AS_OK;

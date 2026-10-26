@@ -59,8 +59,10 @@ A line that is a GOSUB or GOTO target will be highlighted in some way.
 support GR; HGR keywords and associated color and plot.
 These will render using modern graphics. E.g. hgr is 280x192. (Scaled to whatever the run window size is).
 
-Now, we will also have: GR(40,40); GR(80x80); HGR(640x400); 
-These modes both support the same 16-color palette.
+Now, we will also have: GR(40,40); GR(80,50); HGR(320,200); HGR(640,400).
+GR(80,50) blocks are 4×4 pixels of the HGR(320,200) grid. HGR(640,400) is that grid doubled, so a GR block is 8×8 of those pixels.
+These extended resolutions are displayed at the same 280×192 aspect as the traditional Apple II screen.
+These modes support the same 16-color palette.
 (Normal legacy GR is 16 colors; legacy HGR is 8 "colors");
 
 Text in split mode is rendered using Apple II font, with screen split just like an Apple II into top graphics portion and bottom text portion.

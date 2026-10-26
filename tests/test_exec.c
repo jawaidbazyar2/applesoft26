@@ -194,7 +194,7 @@ static void test_graphics_and_call(void) {
 
     s = as_screen_new();
     p = as_program_new();
-    add_line(p, 10, "GR (80,80)");
+    add_line(p, 10, "GR (80,50)");
     add_line(p, 20, "COLOR=4");
     add_line(p, 30, "PLOT 3,4");
     m = as_machine_new(p, s);
@@ -204,7 +204,7 @@ static void test_graphics_and_call(void) {
         if (as_machine_quantum(m, 0.05) != AS_OK) break;
     }
     CHECK(s->disp == AS_DISP_GR80);
-    CHECK(s->pix && s->gw == 80 && s->pix[4 * s->gw + 3] == 4);
+    CHECK(s->pix && s->gw == 80 && s->gh == 50 && s->pix[4 * s->gw + 3] == 4);
     as_machine_free(m);
     as_program_free(p);
     as_screen_free(s);
@@ -240,6 +240,24 @@ static void test_graphics_and_call(void) {
     CHECK(s->disp == AS_DISP_H640);
     CHECK(s->gw == 640 && s->gh == 400);
     CHECK(s->pix && s->pix[0] == 15);
+    as_machine_free(m);
+    as_program_free(p);
+    as_screen_free(s);
+
+    s = as_screen_new();
+    p = as_program_new();
+    add_line(p, 10, "HGR (320,200)");
+    add_line(p, 20, "HCOLOR=9");
+    add_line(p, 30, "HPLOT 319,199");
+    m = as_machine_new(p, s);
+    as_machine_run(m);
+    g = 0;
+    while (as_machine_running(m) && g++ < 10000) {
+        if (as_machine_quantum(m, 0.05) != AS_OK) break;
+    }
+    CHECK(s->disp == AS_DISP_H320);
+    CHECK(s->gw == 320 && s->gh == 200);
+    CHECK(s->pix && s->pix[199 * s->gw + 319] == 9);
     as_machine_free(m);
     as_program_free(p);
     as_screen_free(s);

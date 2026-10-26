@@ -20,7 +20,7 @@ int as_screen_is_lores(const AsScreen *s) {
 }
 
 int as_screen_is_hires(const AsScreen *s) {
-    return s->disp == AS_DISP_HGR || s->disp == AS_DISP_HGR2 || s->disp == AS_DISP_H640;
+    return s->disp == AS_DISP_HGR || s->disp == AS_DISP_HGR2 || s->disp == AS_DISP_H320 || s->disp == AS_DISP_H640;
 }
 
 static void clear_cells(AsScreen *s) {
@@ -210,9 +210,9 @@ void as_screen_gr(AsScreen *s, int cols, int rows) {
     s->hires = 0;
     s->page2 = 0;
     s->mixed = 1;
-    if (cols == 80 && rows == 80) {
+    if (cols == 80 && rows == 50) {
         s->disp = AS_DISP_GR80;
-        alloc_pix(s, 80, 80);
+        alloc_pix(s, 80, 50);
     } else {
         s->disp = AS_DISP_GR;
         alloc_pix(s, 40, 48);
@@ -223,6 +223,14 @@ void as_screen_gr(AsScreen *s, int cols, int rows) {
 void as_screen_hgr(AsScreen *s, int which) {
     s->graphics_on = 1;
     s->hires = 1;
+    if (which == 3) {
+        s->disp = AS_DISP_H320;
+        s->mixed = 1;
+        s->page2 = 0;
+        alloc_pix(s, 320, 200);
+        window_mixed(s);
+        return;
+    }
     if (which == 2) {
         s->disp = AS_DISP_H640;
         s->mixed = 1;
@@ -311,7 +319,7 @@ static void bresenham(AsScreen *s, int x0, int y0, int x1, int y1, int color) {
 }
 
 static int hcolor_ok(const AsScreen *s) {
-    if (s->disp == AS_DISP_H640) return s->hcolor >= 0 && s->hcolor <= 15;
+    if (s->disp == AS_DISP_H320 || s->disp == AS_DISP_H640) return s->hcolor >= 0 && s->hcolor <= 15;
     return s->hcolor >= 0 && s->hcolor <= 7;
 }
 
@@ -349,7 +357,7 @@ static void resolve_soft(AsScreen *s) {
         s->mixed = 0;
         return;
     }
-    if (s->disp == AS_DISP_GR80 || s->disp == AS_DISP_H640) return;
+    if (s->disp == AS_DISP_GR80 || s->disp == AS_DISP_H320 || s->disp == AS_DISP_H640) return;
     if (s->hires) {
         if (s->page2 && !s->mixed) s->disp = AS_DISP_HGR2;
         else {

@@ -61,14 +61,15 @@ Open either from **File → Open…**.
 
 ### Graphics
 
-These display modes are supported:
+These display modes are supported. Every mode is drawn in the traditional Apple II frame — the same 280×192 aspect as `HGR` — and scaled to the run window. Split-screen modes keep four text lines at the bottom.
 
 - `TEXT`
-- `GR` and `GR(40,40)` — 40×40 lo-res, 16 colors
-- `GR(80,80)` — 80×80 lo-res, 16 colors
-- `HGR` — 280×192 hi-res
-- `HGR2` — second hi-res page
-- `HGR(640,400)` — 640×400, 16 colors
+- `GR` and `GR(40,40)` — 40×48 lo-res, 16 colors. Each block is 7×4 pixels of the 280×192 screen. Mixed mode shows the top 40 rows.
+- `GR(80,50)` — 80×50 lo-res, 16 colors. Each block is 4×4 pixels of the `HGR(320,200)` grid.
+- `HGR` — 280×192 hi-res, 8 colors
+- `HGR2` — second hi-res page, full screen
+- `HGR(320,200)` — 320×200, 16 colors
+- `HGR(640,400)` — 640×400, 16 colors. This is the 320×200 grid doubled, so each of its pixels is one quarter of an `HGR(320,200)` pixel, and a `GR(80,50)` block is 8×8 of these pixels.
 
 `PLOT`, `HLIN`, `VLIN`, `HPLOT`, `COLOR=`, and `HCOLOR=` work in the matching modes. Graphics are drawn cleanly; the Apple II’s color-fringing artifacts are not reproduced.
 

@@ -209,12 +209,12 @@ static CGImageRef image_from(uint8_t *px, int w, int h, CGColorSpaceRef cs) {
     return img;
 }
 
-static void draw_image(CGImageRef img, NSRect dest) {
+static void draw_image(CGImageRef img, NSRect dest, CGInterpolationQuality quality) {
     CGContextRef c;
     if (!img) return;
     c = NSGraphicsContext.currentContext.CGContext;
     CGContextSaveGState(c);
-    CGContextSetInterpolationQuality(c, kCGInterpolationLow);
+    CGContextSetInterpolationQuality(c, quality);
     CGContextDrawImage(c, dest, img);
     CGContextRestoreGState(c);
 }
@@ -230,9 +230,9 @@ static NSRect fit_aspect(NSRect bounds, CGFloat w, CGFloat h) {
                       bounds.origin.y + (bounds.size.height - dh) / 2.0, dw, dh);
 }
 
-static void paint_buffer(uint8_t *px, int w, int h, NSRect dest, CGColorSpaceRef cs) {
+static void paint_buffer(uint8_t *px, int w, int h, NSRect dest, CGColorSpaceRef cs, CGInterpolationQuality quality) {
     CGImageRef img = image_from(px, w, h, cs);
-    draw_image(img, dest);
+    draw_image(img, dest, quality);
     if (img) CGImageRelease(img);
 }
 
@@ -341,41 +341,44 @@ static void paint_buffer(uint8_t *px, int w, int h, NSRect dest, CGColorSpaceRef
         }
     }
     if (textRows) draw_text(px, bw, bh, s, 20, 4, grow * cellH, flash);
-    paint_buffer(px, bw, bh, fit_aspect(self.bounds, bw, bh), cs);
+    paint_buffer(px, bw, bh, fit_aspect(self.bounds, bw, bh), cs, kCGInterpolationLow);
     free(px);
 }
 
+/* GR(80,50), HGR(320,200), and HGR(640,400) share a 640×400 grid.
+   A lo-res block is 8×8 of those pixels, which is 4×4 of the 320×200 grid.
+   The frame is 280×192, the same aspect as classic HGR. */
 - (void)drawExtended:(AsScreen *)s cs:(CGColorSpaceRef)cs flash:(int)flash {
-    int gw = s->gw > 0 ? s->gw : 1;
-    int gh = s->gh > 0 ? s->gh : 1;
-    int textH = (s->mixed ? 32 : 0);
-    CGFloat scale, totalH, maxW, x0, y0;
-    NSRect gfxRect, textRect;
+    const int kW = 640;
+    const int kH = 400;
+    int cell = 1;
+    NSRect frame, gfxRect;
     uint8_t *px;
     int y, x;
-    scale = MIN(self.bounds.size.width / (CGFloat)(gw > 280 ? gw : 280),
-                self.bounds.size.height / (CGFloat)(gh + textH));
-    if (scale < 0.05) scale = 0.05;
-    totalH = (gh + textH) * scale;
-    maxW = (gw > 280 ? gw : 280) * scale;
-    x0 = self.bounds.origin.x + (self.bounds.size.width - maxW) / 2.0;
-    y0 = self.bounds.origin.y + (self.bounds.size.height - totalH) / 2.0;
-    gfxRect = NSMakeRect(x0 + (maxW - gw * scale) / 2.0, y0 + textH * scale, gw * scale, gh * scale);
-    px = (uint8_t *)calloc((size_t)gw * (size_t)gh, 4);
+    CGFloat textH = 0;
+    if (s->disp == AS_DISP_GR80) cell = 8;
+    else if (s->disp == AS_DISP_H320) cell = 2;
+    frame = fit_aspect(self.bounds, 280, 192);
+    if (s->mixed) textH = frame.size.height * (32.0 / 192.0);
+    gfxRect = NSMakeRect(frame.origin.x, frame.origin.y + textH, frame.size.width, frame.size.height - textH);
+    px = (uint8_t *)calloc((size_t)kW * (size_t)kH, 4);
     if (!px) return;
-    if (s->pix) {
-        for (y = 0; y < gh; y++) {
-            for (x = 0; x < gw; x++) put_px(px, gw, gh, x, y, color_of(s, s->pix[y * gw + x]));
+    if (s->pix && s->gw > 0 && s->gh > 0) {
+        for (y = 0; y < s->gh; y++) {
+            for (x = 0; x < s->gw; x++) {
+                fill_block(px, kW, kH, x * cell, y * cell, cell, cell,
+                           color_of(s, s->pix[y * s->gw + x]));
+            }
         }
     }
-    paint_buffer(px, gw, gh, gfxRect, cs);
+    paint_buffer(px, kW, kH, gfxRect, cs, kCGInterpolationNone);
     free(px);
     if (!s->mixed) return;
     px = (uint8_t *)calloc(280u * 32u, 4);
     if (!px) return;
     draw_text(px, 280, 32, s, 20, 4, 0, flash);
-    textRect = NSMakeRect(x0 + (maxW - 280 * scale) / 2.0, y0, 280 * scale, 32 * scale);
-    paint_buffer(px, 280, 32, textRect, cs);
+    paint_buffer(px, 280, 32, NSMakeRect(frame.origin.x, frame.origin.y, frame.size.width, textH), cs,
+                 kCGInterpolationLow);
     free(px);
 }
 
@@ -393,10 +396,10 @@ static void paint_buffer(uint8_t *px, int w, int h, NSRect dest, CGColorSpaceRef
         uint8_t *px = (uint8_t *)calloc(280u * 192u, 4);
         if (px) {
             draw_text(px, 280, 192, s, 0, 24, 0, s->flash_phase);
-            paint_buffer(px, 280, 192, fit_aspect(self.bounds, 280, 192), cs);
+            paint_buffer(px, 280, 192, fit_aspect(self.bounds, 280, 192), cs, kCGInterpolationLow);
             free(px);
         }
-    } else if (s->disp == AS_DISP_GR80 || s->disp == AS_DISP_H640) {
+    } else if (s->disp == AS_DISP_GR80 || s->disp == AS_DISP_H320 || s->disp == AS_DISP_H640) {
         [self drawExtended:s cs:cs flash:s->flash_phase];
     } else {
         [self drawClassic:s cs:cs flash:s->flash_phase];
